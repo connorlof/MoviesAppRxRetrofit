@@ -19,6 +19,13 @@ import com.androidtutz.anushka.moviesapp.service.RetrofitInstance;
 import java.net.SocketTimeoutException;
 import java.util.ArrayList;
 
+import io.reactivex.Observable;
+import io.reactivex.ObservableSource;
+import io.reactivex.android.schedulers.AndroidSchedulers;
+import io.reactivex.disposables.CompositeDisposable;
+import io.reactivex.functions.Function;
+import io.reactivex.observers.DisposableObserver;
+import io.reactivex.schedulers.Schedulers;
 import retrofit2.Call;
 import retrofit2.Callback;
 import retrofit2.Response;
@@ -30,7 +37,8 @@ public class MainActivity extends AppCompatActivity {
     private MovieAdapter movieAdapter;
     private SwipeRefreshLayout swipeContainer;
     private Call<MovieDBResponse> call;
-
+    private Observable<MovieDBResponse> movieDBResponseObservable;
+    private CompositeDisposable disposable;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -41,7 +49,7 @@ public class MainActivity extends AppCompatActivity {
         getSupportActionBar().setTitle(" TMDb Popular Movies Today");
 
 
-        getPopularMovies();
+        getPopularMoviesRx();
 
 
         swipeContainer = findViewById(R.id.swipe_layout);
@@ -49,51 +57,84 @@ public class MainActivity extends AppCompatActivity {
         swipeContainer.setOnRefreshListener(new SwipeRefreshLayout.OnRefreshListener() {
             @Override
             public void onRefresh() {
-                getPopularMovies();
+                getPopularMoviesRx();
             }
         });
 
 
     }
 
-    public void getPopularMovies() {
+    //Example without Rx
+//    public void getPopularMovies() {
+//
+//        movies = new ArrayList<>();
+//        MoviesDataService getMoviesDataService = RetrofitInstance.getService();
+//        call = getMoviesDataService.getPopularMovies(this.getString(R.string.api_key));
+//
+//        call.enqueue(new Callback<MovieDBResponse>() {
+//            @Override
+//            public void onResponse(Call<MovieDBResponse> call, Response<MovieDBResponse> response) {
+//
+//                MovieDBResponse movieDBResponse = response.body();
+//
+//                if (movieDBResponse != null && movieDBResponse.getMovies() != null) {
+//
+//                    movies = (ArrayList<Movie>) movieDBResponse.getMovies();
+//                    init();
+//
+//                }
+//
+//            }
+//
+//            @Override
+//            public void onFailure(Call<MovieDBResponse> call, Throwable t) {
+//
+//                if (t instanceof SocketTimeoutException) {
+//                    Toast.makeText(getApplicationContext(), "Socket Time out.", Toast.LENGTH_LONG).show();
+//                }
+//
+//            }
+//        });
+//
+//    }
+
+    public void getPopularMoviesRx() {
 
         movies = new ArrayList<>();
         MoviesDataService getMoviesDataService = RetrofitInstance.getService();
-        call = getMoviesDataService.getPopularMovies(this.getString(R.string.api_key));
+        movieDBResponseObservable = getMoviesDataService.getPopularMoviesWithRx(this.getString(R.string.api_key));
 
-        call.enqueue(new Callback<MovieDBResponse>() {
-            @Override
-            public void onResponse(Call<MovieDBResponse> call, Response<MovieDBResponse> response) {
+        disposable.add(
+                movieDBResponseObservable
+                        .subscribeOn(Schedulers.io())
+                        .observeOn(AndroidSchedulers.mainThread())
+                        .flatMap(new Function<MovieDBResponse, Observable<Movie>>() {
+                            @Override
+                            public Observable<Movie> apply(MovieDBResponse movieDBResponse) throws Exception {
+                                return Observable.fromArray(movieDBResponse.getMovies().toArray(new Movie[0]));
+                            }
+                        })
+                        .subscribeWith(new DisposableObserver<Movie>() {
+                            @Override
+                            public void onNext(Movie movie) {
+                                movies.add(movie);
+                            }
 
-                MovieDBResponse movieDBResponse = response.body();
+                            @Override
+                            public void onError(Throwable e) {
 
-                if (movieDBResponse != null && movieDBResponse.getMovies() != null) {
+                            }
 
+                            @Override
+                            public void onComplete() {
+                                init();
+                            }
+                        })
+        );
 
-                    movies = (ArrayList<Movie>) movieDBResponse.getMovies();
-                    init();
-
-
-                }
-
-
-            }
-
-            @Override
-            public void onFailure(Call<MovieDBResponse> call, Throwable t) {
-
-                if (t instanceof SocketTimeoutException) {
-                    Toast.makeText(getApplicationContext(), "Socket Time out.", Toast.LENGTH_LONG).show();
-                }
-
-
-            }
-        });
 
 
     }
-
 
     public void init() {
 
@@ -118,12 +159,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public void onDestroy() {
         super.onDestroy();
-        if (call != null) {
-            if (call.isExecuted()) {
-
-                call.cancel();
-            }
-        }
+        disposable.clear();
     }
 }
 
